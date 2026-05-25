@@ -9,6 +9,8 @@ class CrosshairSettings {
     var showDot: Bool = true
     var dotSize: CGFloat = 4
     var opacity: CGFloat = 0.85
+    var offsetX: CGFloat = 0
+    var offsetY: CGFloat = 0
 }
 // Jiwon and Joowon are handsome.
 // Joowon and Jiwon are awesome. 
@@ -145,8 +147,9 @@ class CrosshairView: NSView {
     }
 
     override func draw(_ rect: NSRect) {
-        let cx = bounds.midX
-        let cy = bounds.midY
+        // Apply offset from the true center
+        let cx = bounds.midX + settings.offsetX
+        let cy = bounds.midY + settings.offsetY
         let l = settings.lineLength
         let t = settings.lineThickness
         let color = settings.color.withAlphaComponent(settings.opacity)
@@ -184,13 +187,17 @@ class SettingsWindowController: NSWindowController {
     var labels: [NSTextField] = []
     var dotCheckButton: NSButton?
 
+    // Offset input fields
+    var offsetXField: NSTextField?
+    var offsetYField: NSTextField?
+
     init(settings: CrosshairSettings, crosshairView: CrosshairView, overlayWindow: NSWindow) {
         self.settings = settings
         self.crosshairView = crosshairView
         self.overlayWindow = overlayWindow
 
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -203,7 +210,7 @@ class SettingsWindowController: NSWindowController {
         win.titlebarAppearsTransparent = true
         win.isMovableByWindowBackground = true
         win.hasShadow = true
-        win.minSize = NSSize(width: 340, height: 620)
+        win.minSize = NSSize(width: 340, height: 720)
 
         let glassView = GlassSettingsView(frame: win.contentView!.bounds)
         glassView.autoresizingMask = [.width, .height]
@@ -224,7 +231,7 @@ class SettingsWindowController: NSWindowController {
     }
 
     func buildUI(in view: NSView) {
-        var y: CGFloat = 560
+        var y: CGFloat = 660
 
         func label(_ text: String) -> NSTextField {
             let l = NSTextField(labelWithString: text)
@@ -350,6 +357,57 @@ class SettingsWindowController: NSWindowController {
             value: Double(settings.opacity),
             action: #selector(opacityChanged(_:))
         )
+
+        // MARK: Offset Controls
+        _ = label("Crosshair Offset (px)")
+
+        // X offset row
+        let xLabel = NSTextField(labelWithString: "X:")
+        xLabel.frame = NSRect(x: 24, y: y, width: 20, height: 22)
+        xLabel.autoresizingMask = [.minYMargin]
+        xLabel.textColor = theme.textColor
+        view.addSubview(xLabel)
+        labels.append(xLabel)
+
+        let xField = NSTextField(frame: NSRect(x: 48, y: y, width: 100, height: 22))
+        xField.autoresizingMask = [.minYMargin]
+        xField.placeholderString = "0"
+        xField.stringValue = "0"
+        xField.bezelStyle = .roundedBezel
+        xField.target = self
+        xField.action = #selector(offsetXChanged(_:))
+        view.addSubview(xField)
+        offsetXField = xField
+
+        // Y offset row (same line, right side)
+        let yLabel = NSTextField(labelWithString: "Y:")
+        yLabel.frame = NSRect(x: 168, y: y, width: 20, height: 22)
+        yLabel.autoresizingMask = [.minYMargin]
+        yLabel.textColor = theme.textColor
+        view.addSubview(yLabel)
+        labels.append(yLabel)
+
+        let yField = NSTextField(frame: NSRect(x: 192, y: y, width: 100, height: 22))
+        yField.autoresizingMask = [.minYMargin]
+        yField.placeholderString = "0"
+        yField.stringValue = "0"
+        yField.bezelStyle = .roundedBezel
+        yField.target = self
+        yField.action = #selector(offsetYChanged(_:))
+        view.addSubview(yField)
+        offsetYField = yField
+
+        y -= 36
+
+        // Reset offset button
+        let resetBtn = NSButton(frame: NSRect(x: 24, y: y, width: 292, height: 28))
+        resetBtn.autoresizingMask = [.minYMargin, .width]
+        resetBtn.title = "Reset Offset"
+        resetBtn.bezelStyle = .rounded
+        resetBtn.target = self
+        resetBtn.action = #selector(resetOffset)
+        view.addSubview(resetBtn)
+        y -= 40
     }
 
     func updateWindowAppearance() {
@@ -497,6 +555,28 @@ class SettingsWindowController: NSWindowController {
 
     @objc func opacityChanged(_ sender: NSSlider) {
         settings.opacity = CGFloat(sender.doubleValue)
+        refresh()
+    }
+
+    // MARK: - Offset Actions
+
+    @objc func offsetXChanged(_ sender: NSTextField) {
+        let value = CGFloat(sender.doubleValue)
+        settings.offsetX = value
+        refresh()
+    }
+
+    @objc func offsetYChanged(_ sender: NSTextField) {
+        let value = CGFloat(sender.doubleValue)
+        settings.offsetY = value
+        refresh()
+    }
+
+    @objc func resetOffset() {
+        settings.offsetX = 0
+        settings.offsetY = 0
+        offsetXField?.stringValue = "0"
+        offsetYField?.stringValue = "0"
         refresh()
     }
 }
