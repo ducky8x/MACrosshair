@@ -3,14 +3,111 @@ import Carbon
 
 // MARK: - Crosshair Settings
 class CrosshairSettings {
-    var color: NSColor = .red
-    var lineLength: CGFloat = 12
-    var lineThickness: CGFloat = 2
-    var showDot: Bool = true
-    var dotSize: CGFloat = 4
-    var opacity: CGFloat = 0.85
-    var offsetX: CGFloat = 0
-    var offsetY: CGFloat = 0
+    /// Suppresses didSet → save during bulk loads. fileprivate so Persistence can flip it.
+    fileprivate var isLoading = false
+
+    var color: NSColor = .red          { didSet { if !isLoading { Persistence.saveSettings(self) } } }
+    var lineLength: CGFloat = 12       { didSet { if !isLoading { Persistence.saveSettings(self) } } }
+    var lineThickness: CGFloat = 2     { didSet { if !isLoading { Persistence.saveSettings(self) } } }
+    var showDot: Bool = true           { didSet { if !isLoading { Persistence.saveSettings(self) } } }
+    var dotSize: CGFloat = 4           { didSet { if !isLoading { Persistence.saveSettings(self) } } }
+    var opacity: CGFloat = 0.85        { didSet { if !isLoading { Persistence.saveSettings(self) } } }
+    var offsetX: CGFloat = 0           { didSet { if !isLoading { Persistence.saveSettings(self) } } }
+    var offsetY: CGFloat = 0           { didSet { if !isLoading { Persistence.saveSettings(self) } } }
+}
+
+// MARK: - NSColor hex helpers (NSColor is not Codable)
+extension NSColor {
+    /// "#RRGGBB" in sRGB. Always 6 hex digits regardless of input color space.
+    var hexString: String {
+        let srgb = usingColorSpace(.sRGB) ?? self
+        let r = Int(round(srgb.redComponent * 255))
+        let g = Int(round(srgb.greenComponent * 255))
+        let b = Int(round(srgb.blueComponent * 255))
+        return String(format: "#%02X%02X%02X", r, g, b)
+    }
+
+    static func fromHex(_ string: String) -> NSColor? {
+        var s = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let value = UInt32(s, radix: 16) else { return nil }
+        return NSColor(srgbRed: CGFloat((value >> 16) & 0xFF) / 255,
+                       green:   CGFloat((value >>  8) & 0xFF) / 255,
+                       blue:    CGFloat( value        & 0xFF) / 255,
+                       alpha:   1)
+    }
+}
+
+// MARK: - Persistence (UserDefaults-backed)
+enum Persistence {
+    static let defaults = UserDefaults.standard
+
+    private enum Key {
+        static let color              = "color"
+        static let lineLength         = "lineLength"
+        static let lineThickness      = "lineThickness"
+        static let showDot            = "showDot"
+        static let dotSize            = "dotSize"
+        static let opacity            = "opacity"
+        static let offsetX            = "offsetX"
+        static let offsetY            = "offsetY"
+        static let theme              = "theme"
+        static let hotKeyCode         = "hotKeyCode"
+        static let hotKeyModifiers    = "hotKeyModifiers"
+        static let hotKeyDisplayName  = "hotKeyDisplayName"
+    }
+
+    static func saveSettings(_ s: CrosshairSettings) {
+        defaults.set(s.color.hexString,       forKey: Key.color)
+        defaults.set(Double(s.lineLength),    forKey: Key.lineLength)
+        defaults.set(Double(s.lineThickness), forKey: Key.lineThickness)
+        defaults.set(s.showDot,               forKey: Key.showDot)
+        defaults.set(Double(s.dotSize),       forKey: Key.dotSize)
+        defaults.set(Double(s.opacity),       forKey: Key.opacity)
+        defaults.set(Double(s.offsetX),       forKey: Key.offsetX)
+        defaults.set(Double(s.offsetY),       forKey: Key.offsetY)
+    }
+
+    /// Loads any present keys into `s`. Missing keys leave defaults alone.
+    static func loadSettings(into s: CrosshairSettings) {
+        s.isLoading = true
+        defer { s.isLoading = false }
+        if let hex = defaults.string(forKey: Key.color),
+           let c = NSColor.fromHex(hex) { s.color = c }
+        if defaults.object(forKey: Key.lineLength)    != nil { s.lineLength    = CGFloat(defaults.double(forKey: Key.lineLength)) }
+        if defaults.object(forKey: Key.lineThickness) != nil { s.lineThickness = CGFloat(defaults.double(forKey: Key.lineThickness)) }
+        if defaults.object(forKey: Key.showDot)       != nil { s.showDot       = defaults.bool(forKey: Key.showDot) }
+        if defaults.object(forKey: Key.dotSize)       != nil { s.dotSize       = CGFloat(defaults.double(forKey: Key.dotSize)) }
+        if defaults.object(forKey: Key.opacity)       != nil { s.opacity       = CGFloat(defaults.double(forKey: Key.opacity)) }
+        if defaults.object(forKey: Key.offsetX)       != nil { s.offsetX       = CGFloat(defaults.double(forKey: Key.offsetX)) }
+        if defaults.object(forKey: Key.offsetY)       != nil { s.offsetY       = CGFloat(defaults.double(forKey: Key.offsetY)) }
+    }
+
+    static func saveTheme(_ t: SettingsTheme) {
+        defaults.set(t.rawValue, forKey: Key.theme)
+    }
+
+    static func loadTheme() -> SettingsTheme {
+        if let raw = defaults.string(forKey: Key.theme),
+           let t = SettingsTheme(rawValue: raw) { return t }
+        return .clear
+    }
+
+    static func saveHotKey(_ h: HotKeyShortcut) {
+        defaults.set(Int(h.keyCode),       forKey: Key.hotKeyCode)
+        defaults.set(Int(h.modifiers),     forKey: Key.hotKeyModifiers)
+        defaults.set(h.displayName,        forKey: Key.hotKeyDisplayName)
+    }
+
+    static func loadHotKey() -> HotKeyShortcut {
+        let fallback = HotKeyShortcut(keyCode: UInt32(kVK_ANSI_Y), modifiers: 0, displayName: "Y")
+        guard defaults.object(forKey: Key.hotKeyCode) != nil else { return fallback }
+        return HotKeyShortcut(
+            keyCode: UInt32(defaults.integer(forKey: Key.hotKeyCode)),
+            modifiers: UInt32(defaults.integer(forKey: Key.hotKeyModifiers)),
+            displayName: defaults.string(forKey: Key.hotKeyDisplayName) ?? "?"
+        )
+    }
 }
 
 // MARK: - Hotkey Shortcut
@@ -182,7 +279,7 @@ class SettingsWindowController: NSWindowController {
     var recordingMonitor: Any?
 
     var glassView: GlassSettingsView?
-    var theme: SettingsTheme = .clear
+    var theme: SettingsTheme = Persistence.loadTheme()
     var labels: [NSTextField] = []
     var dotCheckButton: NSButton?
 
@@ -371,7 +468,7 @@ class SettingsWindowController: NSWindowController {
         let xField = NSTextField(frame: NSRect(x: 48, y: y, width: 100, height: 22))
         xField.autoresizingMask = [.minYMargin]
         xField.placeholderString = "0"
-        xField.stringValue = "0"
+        xField.stringValue = String(format: "%g", Double(settings.offsetX))
         xField.bezelStyle = .roundedBezel
         xField.target = self
         xField.action = #selector(offsetXChanged(_:))
@@ -389,7 +486,7 @@ class SettingsWindowController: NSWindowController {
         let yField = NSTextField(frame: NSRect(x: 192, y: y, width: 100, height: 22))
         yField.autoresizingMask = [.minYMargin]
         yField.placeholderString = "0"
-        yField.stringValue = "0"
+        yField.stringValue = String(format: "%g", Double(settings.offsetY))
         yField.bezelStyle = .roundedBezel
         yField.target = self
         yField.action = #selector(offsetYChanged(_:))
@@ -446,6 +543,7 @@ class SettingsWindowController: NSWindowController {
         glassView?.theme = newTheme
         updateThemeControls()
         updateWindowAppearance()
+        Persistence.saveTheme(newTheme)
     }
 
     @objc func recordShortcut() {
@@ -505,6 +603,7 @@ class SettingsWindowController: NSWindowController {
             )
 
             (NSApp.delegate as? AppDelegate)?.updateHotKey(shortcut)
+            Persistence.saveHotKey(shortcut)
 
             self.shortcutButton?.title = shortcut.displayName
 
@@ -598,14 +697,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var eventTap: CFMachPort?
     var eventTapSource: CFRunLoopSource?
 
-    var hotKeyShortcut = HotKeyShortcut(
-        keyCode: UInt32(kVK_ANSI_Y),
-        modifiers: 0,
-        displayName: "Y"
-    )
+    var hotKeyShortcut = Persistence.loadHotKey()
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)
+
+        // Restore persisted state before building UI.
+        Persistence.loadSettings(into: settings)
 
         let screen = NSScreen.main!.frame
         crosshairView = CrosshairView(frame: screen, settings: settings)
