@@ -12,8 +12,7 @@ class CrosshairSettings {
     var offsetX: CGFloat = 0
     var offsetY: CGFloat = 0
 }
-// Jiwon and Joowon are handsome.
-// Joowon and Jiwon are awesome. 
+
 // MARK: - Hotkey Shortcut
 struct HotKeyShortcut {
     var keyCode: UInt32
