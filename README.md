@@ -9,6 +9,9 @@ A lightweight macOS overlay app that draws a customizable crosshair at the cente
 - **Pixel-level offset** — shift the crosshair any number of pixels on the X and Y axes independently
 - **Toggle visibility** — show/hide the crosshair via a configurable keyboard shortcut (default: `Y`)
 - **Theme support** — Light, Dark, or Clear settings window
+- **Persistent settings** — all settings are saved automatically and restored on next launch
+- **Profile export / import** — save your settings to a `.json` file and load them on any Mac
+- **iCloud sync** — settings sync automatically across all your Macs via iCloud (requires app signing)
 - **Joins all spaces** — crosshair stays visible across Mission Control spaces and fullscreen apps
 
 ## Requirements
@@ -79,6 +82,23 @@ The offset fields let you move the crosshair away from the true screen center. P
 ### Keyboard Shortcut
 
 The default toggle key is `Y`. To change it, click the shortcut button in the settings panel and press any key or key combination. Modifier-only shortcuts (e.g. `Command + Shift + X`) use the system hotkey API; plain keys use an accessibility event tap.
+
+### Persistent Settings
+
+All settings — color, size, offset, theme, and keyboard shortcut — are saved automatically to your Mac every time you make a change. There is nothing to manually save. When you relaunch the app, everything will be exactly as you left it.
+
+### Profiles (Export / Import)
+
+At the bottom of the settings panel you'll find two buttons:
+
+- **Export Profile** — saves all your current settings to a `.json` file anywhere you choose (iCloud Drive, Dropbox, a USB drive, etc.)
+- **Import Profile** — loads a previously exported `.json` file and applies every setting instantly, including theme and keyboard shortcut
+
+This is the recommended way to move your settings between Macs, back them up, or share a setup with someone else.
+
+### iCloud Sync
+
+If the app is run as a properly signed macOS app, settings sync automatically across all your Macs via iCloud with no extra steps. Any change made on one Mac will appear on your other Macs within seconds. On unsigned builds (running via `swift MACrosshair.swift`), iCloud sync is silently skipped — use Export / Import instead.
 
 ## License
 
