@@ -3,22 +3,20 @@ import Carbon
 
 // MARK: - Crosshair Settings
 class CrosshairSettings {
-    /// Suppresses didSet → save during bulk loads. fileprivate so Persistence can flip it.
     fileprivate var isLoading = false
 
-    var color: NSColor = .red          { didSet { if !isLoading { Persistence.saveSettings(self) } } }
-    var lineLength: CGFloat = 12       { didSet { if !isLoading { Persistence.saveSettings(self) } } }
-    var lineThickness: CGFloat = 2     { didSet { if !isLoading { Persistence.saveSettings(self) } } }
-    var showDot: Bool = true           { didSet { if !isLoading { Persistence.saveSettings(self) } } }
-    var dotSize: CGFloat = 4           { didSet { if !isLoading { Persistence.saveSettings(self) } } }
-    var opacity: CGFloat = 0.85        { didSet { if !isLoading { Persistence.saveSettings(self) } } }
-    var offsetX: CGFloat = 0           { didSet { if !isLoading { Persistence.saveSettings(self) } } }
-    var offsetY: CGFloat = 0           { didSet { if !isLoading { Persistence.saveSettings(self) } } }
+    var color: NSColor = .red          { didSet { if !isLoading { Persistence.saveSettings(self); CloudSync.push(self) } } }
+    var lineLength: CGFloat = 12       { didSet { if !isLoading { Persistence.saveSettings(self); CloudSync.push(self) } } }
+    var lineThickness: CGFloat = 2     { didSet { if !isLoading { Persistence.saveSettings(self); CloudSync.push(self) } } }
+    var showDot: Bool = true           { didSet { if !isLoading { Persistence.saveSettings(self); CloudSync.push(self) } } }
+    var dotSize: CGFloat = 4           { didSet { if !isLoading { Persistence.saveSettings(self); CloudSync.push(self) } } }
+    var opacity: CGFloat = 0.85        { didSet { if !isLoading { Persistence.saveSettings(self); CloudSync.push(self) } } }
+    var offsetX: CGFloat = 0           { didSet { if !isLoading { Persistence.saveSettings(self); CloudSync.push(self) } } }
+    var offsetY: CGFloat = 0           { didSet { if !isLoading { Persistence.saveSettings(self); CloudSync.push(self) } } }
 }
 
-// MARK: - NSColor hex helpers (NSColor is not Codable)
+// MARK: - NSColor hex helpers
 extension NSColor {
-    /// "#RRGGBB" in sRGB. Always 6 hex digits regardless of input color space.
     var hexString: String {
         let srgb = usingColorSpace(.sRGB) ?? self
         let r = Int(round(srgb.redComponent * 255))
@@ -35,6 +33,59 @@ extension NSColor {
                        green:   CGFloat((value >>  8) & 0xFF) / 255,
                        blue:    CGFloat( value        & 0xFF) / 255,
                        alpha:   1)
+    }
+}
+
+// MARK: - Settings Payload (Codable, used for both export and iCloud)
+struct SettingsPayload: Codable {
+    var color: String
+    var lineLength: Double
+    var lineThickness: Double
+    var showDot: Bool
+    var dotSize: Double
+    var opacity: Double
+    var offsetX: Double
+    var offsetY: Double
+    var theme: String
+    var hotKeyCode: Int
+    var hotKeyModifiers: Int
+    var hotKeyDisplayName: String
+
+    init(settings: CrosshairSettings, theme: SettingsTheme, hotKey: HotKeyShortcut) {
+        color           = settings.color.hexString
+        lineLength      = Double(settings.lineLength)
+        lineThickness   = Double(settings.lineThickness)
+        showDot         = settings.showDot
+        dotSize         = Double(settings.dotSize)
+        opacity         = Double(settings.opacity)
+        offsetX         = Double(settings.offsetX)
+        offsetY         = Double(settings.offsetY)
+        self.theme      = theme.rawValue
+        hotKeyCode      = Int(hotKey.keyCode)
+        hotKeyModifiers = Int(hotKey.modifiers)
+        hotKeyDisplayName = hotKey.displayName
+    }
+
+    func apply(to settings: CrosshairSettings) -> (SettingsTheme?, HotKeyShortcut?) {
+        settings.isLoading = true
+        defer { settings.isLoading = false }
+
+        if let c = NSColor.fromHex(color) { settings.color = c }
+        settings.lineLength    = CGFloat(lineLength)
+        settings.lineThickness = CGFloat(lineThickness)
+        settings.showDot       = showDot
+        settings.dotSize       = CGFloat(dotSize)
+        settings.opacity       = CGFloat(opacity)
+        settings.offsetX       = CGFloat(offsetX)
+        settings.offsetY       = CGFloat(offsetY)
+
+        let resolvedTheme = SettingsTheme(rawValue: theme)
+        let resolvedHotKey = HotKeyShortcut(
+            keyCode: UInt32(hotKeyCode),
+            modifiers: UInt32(hotKeyModifiers),
+            displayName: hotKeyDisplayName
+        )
+        return (resolvedTheme, resolvedHotKey)
     }
 }
 
@@ -68,7 +119,6 @@ enum Persistence {
         defaults.set(Double(s.offsetY),       forKey: Key.offsetY)
     }
 
-    /// Loads any present keys into `s`. Missing keys leave defaults alone.
     static func loadSettings(into s: CrosshairSettings) {
         s.isLoading = true
         defer { s.isLoading = false }
@@ -94,9 +144,9 @@ enum Persistence {
     }
 
     static func saveHotKey(_ h: HotKeyShortcut) {
-        defaults.set(Int(h.keyCode),       forKey: Key.hotKeyCode)
-        defaults.set(Int(h.modifiers),     forKey: Key.hotKeyModifiers)
-        defaults.set(h.displayName,        forKey: Key.hotKeyDisplayName)
+        defaults.set(Int(h.keyCode),   forKey: Key.hotKeyCode)
+        defaults.set(Int(h.modifiers), forKey: Key.hotKeyModifiers)
+        defaults.set(h.displayName,    forKey: Key.hotKeyDisplayName)
     }
 
     static func loadHotKey() -> HotKeyShortcut {
@@ -107,6 +157,62 @@ enum Persistence {
             modifiers: UInt32(defaults.integer(forKey: Key.hotKeyModifiers)),
             displayName: defaults.string(forKey: Key.hotKeyDisplayName) ?? "?"
         )
+    }
+}
+
+// MARK: - Cloud Sync (iCloud Key-Value Store)
+enum CloudSync {
+    private static let store = NSUbiquitousKeyValueStore.default
+    private static let cloudKey = "crosshairSettings"
+
+    /// Push current settings up to iCloud.
+    static func push(_ s: CrosshairSettings) {
+        guard let delegate = NSApp.delegate as? AppDelegate else { return }
+        let payload = SettingsPayload(
+            settings: s,
+            theme: delegate.settingsController?.theme ?? .clear,
+            hotKey: delegate.hotKeyShortcut
+        )
+        if let data = try? JSONEncoder().encode(payload) {
+            store.set(data, forKey: cloudKey)
+            store.synchronize()
+        }
+    }
+
+    /// Pull settings from iCloud and apply them. Returns true if anything was pulled.
+    @discardableResult
+    static func pull(into s: CrosshairSettings) -> SettingsPayload? {
+        guard let data = store.data(forKey: cloudKey),
+              let payload = try? JSONDecoder().decode(SettingsPayload.self, from: data)
+        else { return nil }
+        return payload
+    }
+
+    /// Start listening for external iCloud changes (e.g. from another Mac).
+    static func startObserving() {
+        NotificationCenter.default.addObserver(
+            forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: store,
+            queue: .main
+        ) { _ in
+            guard let delegate = NSApp.delegate as? AppDelegate else { return }
+            if let payload = CloudSync.pull(into: delegate.settings) {
+                let (theme, hotKey) = payload.apply(to: delegate.settings)
+                Persistence.saveSettings(delegate.settings)
+                if let t = theme {
+                    Persistence.saveTheme(t)
+                    delegate.settingsController?.applyTheme(t)
+                }
+                if let h = hotKey {
+                    Persistence.saveHotKey(h)
+                    delegate.updateHotKey(h)
+                    delegate.settingsController?.shortcutButton?.title = h.displayName
+                }
+                delegate.settingsController?.syncUIFromSettings()
+                delegate.crosshairView.needsDisplay = true
+            }
+        }
+        store.synchronize()
     }
 }
 
@@ -125,10 +231,8 @@ enum SettingsTheme: String, CaseIterable {
 
     var textColor: NSColor {
         switch self {
-        case .light:
-            return .black
-        case .dark, .clear:
-            return .white
+        case .light: return .black
+        case .dark, .clear: return .white
         }
     }
 }
@@ -137,37 +241,27 @@ enum SettingsTheme: String, CaseIterable {
 class GlassSettingsView: NSView {
     private let blurView = NSVisualEffectView()
 
-    override var allowsVibrancy: Bool {
-        false
-    }
+    override var allowsVibrancy: Bool { false }
 
     var theme: SettingsTheme = .clear {
-        didSet {
-            applyAppearance()
-        }
+        didSet { applyAppearance() }
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-
         wantsLayer = true
         layer?.cornerRadius = 22
         layer?.masksToBounds = true
-
         blurView.blendingMode = .behindWindow
         blurView.state = .active
         blurView.material = .hudWindow
         blurView.alphaValue = 0.75
         blurView.autoresizingMask = [.width, .height]
-
         addSubview(blurView, positioned: .below, relativeTo: nil)
-
         applyAppearance()
     }
 
-    required init?(coder: NSCoder) {
-        fatalError()
-    }
+    required init?(coder: NSCoder) { fatalError() }
 
     override func layout() {
         super.layout()
@@ -179,51 +273,36 @@ class GlassSettingsView: NSView {
         case .light:
             blurView.isHidden = true
             layer?.backgroundColor = NSColor.white.cgColor
-
         case .dark:
             blurView.isHidden = true
             layer?.backgroundColor = NSColor.black.cgColor
-
         case .clear:
             blurView.isHidden = false
             blurView.material = .hudWindow
             blurView.alphaValue = 0.75
             layer?.backgroundColor = NSColor.clear.cgColor
         }
-
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-
         let rect = bounds.insetBy(dx: 1.5, dy: 1.5)
         let path = NSBezierPath(roundedRect: rect, xRadius: 22, yRadius: 22)
-
         switch theme {
-        case .light:
-            NSColor.black.withAlphaComponent(0.18).setStroke()
-        case .dark:
-            NSColor.white.withAlphaComponent(0.20).setStroke()
-        case .clear:
-            NSColor.white.withAlphaComponent(0.42).setStroke()
+        case .light: NSColor.black.withAlphaComponent(0.18).setStroke()
+        case .dark:  NSColor.white.withAlphaComponent(0.20).setStroke()
+        case .clear: NSColor.white.withAlphaComponent(0.42).setStroke()
         }
-
         path.lineWidth = 1.4
         path.stroke()
-
         let innerRect = bounds.insetBy(dx: 7, dy: 7)
         let innerPath = NSBezierPath(roundedRect: innerRect, xRadius: 17, yRadius: 17)
-
         switch theme {
-        case .light:
-            NSColor.black.withAlphaComponent(0.08).setStroke()
-        case .dark:
-            NSColor.white.withAlphaComponent(0.08).setStroke()
-        case .clear:
-            NSColor.white.withAlphaComponent(0.22).setStroke()
+        case .light: NSColor.black.withAlphaComponent(0.08).setStroke()
+        case .dark:  NSColor.white.withAlphaComponent(0.08).setStroke()
+        case .clear: NSColor.white.withAlphaComponent(0.22).setStroke()
         }
-
         innerPath.lineWidth = 2.0
         innerPath.stroke()
     }
@@ -238,33 +317,20 @@ class CrosshairView: NSView {
         super.init(frame: frame)
     }
 
-    required init?(coder: NSCoder) {
-        fatalError()
-    }
+    required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ rect: NSRect) {
-        // Apply offset from the true center
         let cx = bounds.midX + settings.offsetX
         let cy = bounds.midY + settings.offsetY
         let l = settings.lineLength
         let t = settings.lineThickness
         let color = settings.color.withAlphaComponent(settings.opacity)
-
         color.setFill()
-
         NSRect(x: cx - t / 2, y: cy - l, width: t, height: l * 2).fill()
         NSRect(x: cx - l, y: cy - t / 2, width: l * 2, height: t).fill()
-
         if settings.showDot {
             let d = settings.dotSize
-            NSBezierPath(
-                ovalIn: NSRect(
-                    x: cx - d / 2,
-                    y: cy - d / 2,
-                    width: d,
-                    height: d
-                )
-            ).fill()
+            NSBezierPath(ovalIn: NSRect(x: cx - d / 2, y: cy - d / 2, width: d, height: d)).fill()
         }
     }
 }
@@ -282,10 +348,14 @@ class SettingsWindowController: NSWindowController {
     var theme: SettingsTheme = Persistence.loadTheme()
     var labels: [NSTextField] = []
     var dotCheckButton: NSButton?
-
-    // Offset input fields
     var offsetXField: NSTextField?
     var offsetYField: NSTextField?
+
+    // Sliders — kept so syncUIFromSettings() can update them after a cloud pull
+    var lengthSlider: NSSlider?
+    var thicknessSlider: NSSlider?
+    var dotSizeSlider: NSSlider?
+    var opacitySlider: NSSlider?
 
     init(settings: CrosshairSettings, crosshairView: CrosshairView, overlayWindow: NSWindow) {
         self.settings = settings
@@ -293,12 +363,11 @@ class SettingsWindowController: NSWindowController {
         self.overlayWindow = overlayWindow
 
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-
         win.title = "Crosshair Settings"
         win.center()
         win.isOpaque = false
@@ -306,28 +375,24 @@ class SettingsWindowController: NSWindowController {
         win.titlebarAppearsTransparent = true
         win.isMovableByWindowBackground = true
         win.hasShadow = true
-        win.minSize = NSSize(width: 340, height: 720)
+        win.minSize = NSSize(width: 340, height: 780)
 
         let glassView = GlassSettingsView(frame: win.contentView!.bounds)
         glassView.autoresizingMask = [.width, .height]
         glassView.theme = theme
-
         win.contentView = glassView
         self.glassView = glassView
 
         super.init(window: win)
-
         win.delegate = self
         buildUI(in: glassView)
         updateWindowAppearance()
     }
 
-    required init?(coder: NSCoder) {
-        fatalError()
-    }
+    required init?(coder: NSCoder) { fatalError() }
 
     func buildUI(in view: NSView) {
-        var y: CGFloat = 660
+        var y: CGFloat = 720
 
         func label(_ text: String) -> NSTextField {
             let l = NSTextField(labelWithString: text)
@@ -354,6 +419,7 @@ class SettingsWindowController: NSWindowController {
             return s
         }
 
+        // Hide / Show button
         let btn = NSButton(frame: NSRect(x: 24, y: y, width: 292, height: 32))
         btn.autoresizingMask = [.minYMargin, .width]
         btn.title = "Hide Crosshair"
@@ -364,8 +430,8 @@ class SettingsWindowController: NSWindowController {
         view.addSubview(btn)
         y -= 48
 
+        // Theme
         _ = label("Theme")
-
         let themePicker = NSPopUpButton(frame: NSRect(x: 24, y: y, width: 292, height: 30))
         themePicker.autoresizingMask = [.minYMargin, .width]
         themePicker.addItems(withTitles: SettingsTheme.allCases.map { $0.rawValue })
@@ -375,8 +441,8 @@ class SettingsWindowController: NSWindowController {
         view.addSubview(themePicker)
         y -= 46
 
+        // Shortcut
         _ = label("Toggle Shortcut")
-
         let shortcutButton = NSButton(frame: NSRect(x: 24, y: y, width: 292, height: 32))
         shortcutButton.autoresizingMask = [.minYMargin, .width]
         shortcutButton.title = (NSApp.delegate as? AppDelegate)?.hotKeyShortcut.displayName ?? "Y"
@@ -387,14 +453,13 @@ class SettingsWindowController: NSWindowController {
         self.shortcutButton = shortcutButton
         y -= 48
 
+        // Color
         _ = label("Color")
-
         let colorRow = NSStackView(frame: NSRect(x: 24, y: y, width: 292, height: 32))
         colorRow.autoresizingMask = [.minYMargin, .width]
         colorRow.orientation = .horizontal
         colorRow.spacing = 8
         colorRow.distribution = .fillEqually
-
         for name in ["Red", "Green", "White", "Yellow", "Cyan"] {
             let b = NSButton(frame: .zero)
             b.title = name
@@ -404,60 +469,34 @@ class SettingsWindowController: NSWindowController {
             b.identifier = NSUserInterfaceItemIdentifier(name)
             colorRow.addArrangedSubview(b)
         }
-
         view.addSubview(colorRow)
         y -= 48
 
+        // Sliders
         _ = label("Line Length")
-        _ = slider(
-            min: 4,
-            max: 40,
-            value: Double(settings.lineLength),
-            action: #selector(lengthChanged(_:))
-        )
+        lengthSlider = slider(min: 4, max: 40, value: Double(settings.lineLength), action: #selector(lengthChanged(_:)))
 
         _ = label("Line Thickness")
-        _ = slider(
-            min: 1,
-            max: 8,
-            value: Double(settings.lineThickness),
-            action: #selector(thicknessChanged(_:))
-        )
+        thicknessSlider = slider(min: 1, max: 8, value: Double(settings.lineThickness), action: #selector(thicknessChanged(_:)))
 
-        let dotCheck = NSButton(
-            checkboxWithTitle: "Show Center Dot",
-            target: self,
-            action: #selector(dotToggled(_:))
-        )
+        let dotCheck = NSButton(checkboxWithTitle: "Show Center Dot", target: self, action: #selector(dotToggled(_:)))
         dotCheck.frame = NSRect(x: 24, y: y, width: 292, height: 22)
         dotCheck.autoresizingMask = [.minYMargin, .width]
         dotCheck.state = settings.showDot ? .on : .off
         dotCheck.contentTintColor = theme.textColor
         view.addSubview(dotCheck)
-
         dotCheckButton = dotCheck
         y -= 36
 
         _ = label("Dot Size")
-        _ = slider(
-            min: 2,
-            max: 12,
-            value: Double(settings.dotSize),
-            action: #selector(dotSizeChanged(_:))
-        )
+        dotSizeSlider = slider(min: 2, max: 12, value: Double(settings.dotSize), action: #selector(dotSizeChanged(_:)))
 
         _ = label("Crosshair Opacity")
-        _ = slider(
-            min: 0.1,
-            max: 1.0,
-            value: Double(settings.opacity),
-            action: #selector(opacityChanged(_:))
-        )
+        opacitySlider = slider(min: 0.1, max: 1.0, value: Double(settings.opacity), action: #selector(opacityChanged(_:)))
 
-        // MARK: Offset Controls
+        // Offset
         _ = label("Crosshair Offset (px)")
 
-        // X offset row
         let xLabel = NSTextField(labelWithString: "X:")
         xLabel.frame = NSRect(x: 24, y: y, width: 20, height: 22)
         xLabel.autoresizingMask = [.minYMargin]
@@ -475,7 +514,6 @@ class SettingsWindowController: NSWindowController {
         view.addSubview(xField)
         offsetXField = xField
 
-        // Y offset row (same line, right side)
         let yLabel = NSTextField(labelWithString: "Y:")
         yLabel.frame = NSRect(x: 168, y: y, width: 20, height: 22)
         yLabel.autoresizingMask = [.minYMargin]
@@ -492,10 +530,8 @@ class SettingsWindowController: NSWindowController {
         yField.action = #selector(offsetYChanged(_:))
         view.addSubview(yField)
         offsetYField = yField
-
         y -= 36
 
-        // Reset offset button
         let resetBtn = NSButton(frame: NSRect(x: 24, y: y, width: 292, height: 28))
         resetBtn.autoresizingMask = [.minYMargin, .width]
         resetBtn.title = "Reset Offset"
@@ -503,179 +539,185 @@ class SettingsWindowController: NSWindowController {
         resetBtn.target = self
         resetBtn.action = #selector(resetOffset)
         view.addSubview(resetBtn)
+        y -= 44
+
+        // ── Profile: Export / Import ──────────────────────────────────────────
+        _ = label("Profile")
+
+        let profileRow = NSStackView(frame: NSRect(x: 24, y: y, width: 292, height: 32))
+        profileRow.autoresizingMask = [.minYMargin, .width]
+        profileRow.orientation = .horizontal
+        profileRow.spacing = 10
+        profileRow.distribution = .fillEqually
+
+        let exportBtn = NSButton(frame: .zero)
+        exportBtn.title = "Export Profile"
+        exportBtn.bezelStyle = .rounded
+        exportBtn.target = self
+        exportBtn.action = #selector(exportProfile)
+        profileRow.addArrangedSubview(exportBtn)
+
+        let importBtn = NSButton(frame: .zero)
+        importBtn.title = "Import Profile"
+        importBtn.bezelStyle = .rounded
+        importBtn.target = self
+        importBtn.action = #selector(importProfile)
+        profileRow.addArrangedSubview(importBtn)
+
+        view.addSubview(profileRow)
         y -= 40
+    }
+
+    // MARK: - Theme helpers
+
+    func applyTheme(_ newTheme: SettingsTheme) {
+        theme = newTheme
+        glassView?.theme = newTheme
+        updateThemeControls()
+        updateWindowAppearance()
     }
 
     func updateWindowAppearance() {
         switch theme {
-        case .light:
-            window?.appearance = NSAppearance(named: .aqua)
-        case .dark, .clear:
-            window?.appearance = NSAppearance(named: .darkAqua)
+        case .light: window?.appearance = NSAppearance(named: .aqua)
+        case .dark, .clear: window?.appearance = NSAppearance(named: .darkAqua)
         }
     }
 
     func updateThemeControls() {
-        for label in labels {
-            label.textColor = theme.textColor
-        }
-
+        for label in labels { label.textColor = theme.textColor }
         dotCheckButton?.contentTintColor = theme.textColor
     }
 
-    func refresh() {
-        crosshairView.needsDisplay = true
+    // MARK: - Sync UI from settings (called after a cloud pull)
+
+    func syncUIFromSettings() {
+        lengthSlider?.doubleValue    = Double(settings.lineLength)
+        thicknessSlider?.doubleValue = Double(settings.lineThickness)
+        dotSizeSlider?.doubleValue   = Double(settings.dotSize)
+        opacitySlider?.doubleValue   = Double(settings.opacity)
+        dotCheckButton?.state        = settings.showDot ? .on : .off
+        offsetXField?.stringValue    = String(format: "%g", Double(settings.offsetX))
+        offsetYField?.stringValue    = String(format: "%g", Double(settings.offsetY))
     }
+
+    func refresh() { crosshairView.needsDisplay = true }
+
+    // MARK: - Actions
 
     @objc func toggleCrosshair() {
         (NSApp.delegate as? AppDelegate)?.toggleCrosshairVisibility()
     }
 
     @objc func themeChanged(_ sender: NSPopUpButton) {
-        guard
-            let title = sender.selectedItem?.title,
-            let newTheme = SettingsTheme(rawValue: title)
-        else {
-            return
-        }
-
-        theme = newTheme
-        glassView?.theme = newTheme
-        updateThemeControls()
-        updateWindowAppearance()
+        guard let title = sender.selectedItem?.title,
+              let newTheme = SettingsTheme(rawValue: title) else { return }
+        applyTheme(newTheme)
         Persistence.saveTheme(newTheme)
     }
 
     @objc func recordShortcut() {
         shortcutButton?.title = "Press shortcut..."
-
         (NSApp.delegate as? AppDelegate)?.unregisterCurrentHotKey()
-
-        if let recordingMonitor {
-            NSEvent.removeMonitor(recordingMonitor)
-            self.recordingMonitor = nil
-        }
+        if let recordingMonitor { NSEvent.removeMonitor(recordingMonitor); self.recordingMonitor = nil }
 
         recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else {
-                return event
-            }
-
+            guard let self else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-
             var carbonModifiers: UInt32 = 0
             var displayParts: [String] = []
-
-            if flags.contains(.command) {
-                carbonModifiers |= UInt32(cmdKey)
-                displayParts.append("Command")
-            }
-
-            if flags.contains(.shift) {
-                carbonModifiers |= UInt32(shiftKey)
-                displayParts.append("Shift")
-            }
-
-            if flags.contains(.option) {
-                carbonModifiers |= UInt32(optionKey)
-                displayParts.append("Option")
-            }
-
-            if flags.contains(.control) {
-                carbonModifiers |= UInt32(controlKey)
-                displayParts.append("Control")
-            }
-
+            if flags.contains(.command) { carbonModifiers |= UInt32(cmdKey); displayParts.append("Command") }
+            if flags.contains(.shift)   { carbonModifiers |= UInt32(shiftKey); displayParts.append("Shift") }
+            if flags.contains(.option)  { carbonModifiers |= UInt32(optionKey); displayParts.append("Option") }
+            if flags.contains(.control) { carbonModifiers |= UInt32(controlKey); displayParts.append("Control") }
             let keyName = (event.charactersIgnoringModifiers ?? "").uppercased()
-
             guard !keyName.isEmpty else {
                 self.shortcutButton?.title = "Try another key"
                 (NSApp.delegate as? AppDelegate)?.registerToggleHotKey()
                 return nil
             }
-
             displayParts.append(keyName)
-
-            let shortcut = HotKeyShortcut(
-                keyCode: UInt32(event.keyCode),
-                modifiers: carbonModifiers,
-                displayName: displayParts.joined(separator: " + ")
-            )
-
+            let shortcut = HotKeyShortcut(keyCode: UInt32(event.keyCode), modifiers: carbonModifiers,
+                                          displayName: displayParts.joined(separator: " + "))
             (NSApp.delegate as? AppDelegate)?.updateHotKey(shortcut)
             Persistence.saveHotKey(shortcut)
-
             self.shortcutButton?.title = shortcut.displayName
-
-            if let recordingMonitor = self.recordingMonitor {
-                NSEvent.removeMonitor(recordingMonitor)
-                self.recordingMonitor = nil
-            }
-
+            if let m = self.recordingMonitor { NSEvent.removeMonitor(m); self.recordingMonitor = nil }
             return nil
         }
     }
 
     @objc func colorChanged(_ sender: NSButton) {
-        let map: [String: NSColor] = [
-            "Red": .red,
-            "Green": .green,
-            "White": .white,
-            "Yellow": .yellow,
-            "Cyan": .cyan
-        ]
+        let map: [String: NSColor] = ["Red": .red, "Green": .green, "White": .white, "Yellow": .yellow, "Cyan": .cyan]
+        if let c = map[sender.identifier?.rawValue ?? ""] { settings.color = c; refresh() }
+    }
 
-        if let c = map[sender.identifier?.rawValue ?? ""] {
-            settings.color = c
-            refresh()
+    @objc func lengthChanged(_ sender: NSSlider)    { settings.lineLength    = CGFloat(sender.doubleValue); refresh() }
+    @objc func thicknessChanged(_ sender: NSSlider) { settings.lineThickness = CGFloat(sender.doubleValue); refresh() }
+    @objc func dotToggled(_ sender: NSButton)        { settings.showDot       = sender.state == .on; refresh() }
+    @objc func dotSizeChanged(_ sender: NSSlider)   { settings.dotSize       = CGFloat(sender.doubleValue); refresh() }
+    @objc func opacityChanged(_ sender: NSSlider)   { settings.opacity       = CGFloat(sender.doubleValue); refresh() }
+
+    @objc func offsetXChanged(_ sender: NSTextField) { settings.offsetX = CGFloat(sender.doubleValue); refresh() }
+    @objc func offsetYChanged(_ sender: NSTextField) { settings.offsetY = CGFloat(sender.doubleValue); refresh() }
+
+    @objc func resetOffset() {
+        settings.offsetX = 0; settings.offsetY = 0
+        offsetXField?.stringValue = "0"; offsetYField?.stringValue = "0"
+        refresh()
+    }
+
+    // MARK: - Export Profile
+
+    @objc func exportProfile() {
+        guard let delegate = NSApp.delegate as? AppDelegate else { return }
+        let payload = SettingsPayload(settings: settings, theme: theme, hotKey: delegate.hotKeyShortcut)
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+
+        let panel = NSSavePanel()
+        panel.title = "Export Crosshair Profile"
+        panel.nameFieldStringValue = "crosshair-profile.json"
+        panel.allowedContentTypes = [.json]
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            try? data.write(to: url)
         }
     }
 
-    @objc func lengthChanged(_ sender: NSSlider) {
-        settings.lineLength = CGFloat(sender.doubleValue)
-        refresh()
-    }
+    // MARK: - Import Profile
 
-    @objc func thicknessChanged(_ sender: NSSlider) {
-        settings.lineThickness = CGFloat(sender.doubleValue)
-        refresh()
-    }
+    @objc func importProfile() {
+        guard let delegate = NSApp.delegate as? AppDelegate else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Import Crosshair Profile"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url,
+                  let data = try? Data(contentsOf: url),
+                  let payload = try? JSONDecoder().decode(SettingsPayload.self, from: data)
+            else { return }
 
-    @objc func dotToggled(_ sender: NSButton) {
-        settings.showDot = sender.state == .on
-        refresh()
-    }
+            let (resolvedTheme, resolvedHotKey) = payload.apply(to: self.settings)
 
-    @objc func dotSizeChanged(_ sender: NSSlider) {
-        settings.dotSize = CGFloat(sender.doubleValue)
-        refresh()
-    }
+            Persistence.saveSettings(self.settings)
 
-    @objc func opacityChanged(_ sender: NSSlider) {
-        settings.opacity = CGFloat(sender.doubleValue)
-        refresh()
-    }
+            if let t = resolvedTheme {
+                Persistence.saveTheme(t)
+                self.applyTheme(t)
+            }
+            if let h = resolvedHotKey {
+                Persistence.saveHotKey(h)
+                delegate.updateHotKey(h)
+                self.shortcutButton?.title = h.displayName
+            }
 
-    // MARK: - Offset Actions
+            self.syncUIFromSettings()
+            self.refresh()
 
-    @objc func offsetXChanged(_ sender: NSTextField) {
-        let value = CGFloat(sender.doubleValue)
-        settings.offsetX = value
-        refresh()
-    }
-
-    @objc func offsetYChanged(_ sender: NSTextField) {
-        let value = CGFloat(sender.doubleValue)
-        settings.offsetY = value
-        refresh()
-    }
-
-    @objc func resetOffset() {
-        settings.offsetX = 0
-        settings.offsetY = 0
-        offsetXField?.stringValue = "0"
-        offsetYField?.stringValue = "0"
-        refresh()
+            // Also push the freshly-imported profile to iCloud
+            CloudSync.push(self.settings)
+        }
     }
 }
 
@@ -702,19 +744,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)
 
-        // Restore persisted state before building UI.
+        // 1. Load local prefs
         Persistence.loadSettings(into: settings)
 
+        // 2. Overlay window
         let screen = NSScreen.main!.frame
         crosshairView = CrosshairView(frame: screen, settings: settings)
 
-        overlayWindow = NSWindow(
-            contentRect: screen,
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-
+        overlayWindow = NSWindow(contentRect: screen, styleMask: .borderless, backing: .buffered, defer: false)
         overlayWindow.backgroundColor = .clear
         overlayWindow.isOpaque = false
         overlayWindow.level = .screenSaver
@@ -723,16 +760,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlayWindow.contentView = crosshairView
         overlayWindow.orderFrontRegardless()
 
-        settingsController = SettingsWindowController(
-            settings: settings,
-            crosshairView: crosshairView,
-            overlayWindow: overlayWindow
-        )
-
+        // 3. Settings window
+        settingsController = SettingsWindowController(settings: settings, crosshairView: crosshairView, overlayWindow: overlayWindow)
         settingsController.showWindow(nil)
 
+        // 4. Hot keys
         registerToggleHotKey()
         installHotKeyHandler()
+
+        // 5. iCloud — pull any stored cloud settings, then start observing
+        if let payload = CloudSync.pull(into: settings) {
+            let (theme, hotKey) = payload.apply(to: settings)
+            Persistence.saveSettings(settings)
+            if let t = theme { Persistence.saveTheme(t); settingsController.applyTheme(t) }
+            if let h = hotKey { Persistence.saveHotKey(h); updateHotKey(h); settingsController.shortcutButton?.title = h.displayName }
+            settingsController.syncUIFromSettings()
+            crosshairView.needsDisplay = true
+        }
+        CloudSync.startObserving()
 
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -753,105 +798,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func unregisterCurrentHotKey() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-        }
-
-        if let eventTap {
-            CFMachPortInvalidate(eventTap)
-            self.eventTap = nil
-            self.eventTapSource = nil
-        }
+        if let hotKeyRef { UnregisterEventHotKey(hotKeyRef); self.hotKeyRef = nil }
+        if let eventTap  { CFMachPortInvalidate(eventTap); self.eventTap = nil; self.eventTapSource = nil }
     }
 
     func registerToggleHotKey() {
         unregisterCurrentHotKey()
-
-        if hotKeyShortcut.modifiers == 0 {
-            registerPlainKeyMonitor()
-            return
-        }
-
-        var hotKeyID = EventHotKeyID(
-            signature: OSType("CRSH".fourCharCodeValue),
-            id: 1
-        )
-
-        RegisterEventHotKey(
-            hotKeyShortcut.keyCode,
-            hotKeyShortcut.modifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
-        )
+        if hotKeyShortcut.modifiers == 0 { registerPlainKeyMonitor(); return }
+        var hotKeyID = EventHotKeyID(signature: OSType("CRSH".fourCharCodeValue), id: 1)
+        RegisterEventHotKey(hotKeyShortcut.keyCode, hotKeyShortcut.modifiers, hotKeyID,
+                            GetApplicationEventTarget(), 0, &hotKeyRef)
     }
 
     func registerPlainKeyMonitor() {
         let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-
         eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .listenOnly,
+            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
             eventsOfInterest: mask,
             callback: { _, _, event, userData in
-                guard let userData else {
-                    return Unmanaged.passUnretained(event)
+                guard let userData else { return Unmanaged.passUnretained(event) }
+                let d = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
+                if UInt32(event.getIntegerValueField(.keyboardEventKeycode)) == d.hotKeyShortcut.keyCode {
+                    DispatchQueue.main.async { d.toggleCrosshairVisibility() }
                 }
-
-                let appDelegate = Unmanaged<AppDelegate>
-                    .fromOpaque(userData)
-                    .takeUnretainedValue()
-
-                let keyCode = UInt32(event.getIntegerValueField(.keyboardEventKeycode))
-
-                if keyCode == appDelegate.hotKeyShortcut.keyCode {
-                    DispatchQueue.main.async {
-                        appDelegate.toggleCrosshairVisibility()
-                    }
-                }
-
                 return Unmanaged.passUnretained(event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         )
-
-        guard let eventTap else {
-            print("Could not create key monitor. You may need Accessibility permission.")
-            return
-        }
-
+        guard let eventTap else { print("Could not create key monitor. You may need Accessibility permission."); return }
         eventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), eventTapSource, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
     }
 
     func installHotKeyHandler() {
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
-
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         InstallEventHandler(
             GetApplicationEventTarget(),
             { _, _, userData in
-                guard let userData else {
-                    return noErr
-                }
-
-                let appDelegate = Unmanaged<AppDelegate>
-                    .fromOpaque(userData)
-                    .takeUnretainedValue()
-
-                appDelegate.toggleCrosshairVisibility()
+                guard let userData else { return noErr }
+                Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue().toggleCrosshairVisibility()
                 return noErr
             },
-            1,
-            &eventType,
-            Unmanaged.passUnretained(self).toOpaque(),
-            nil
+            1, &eventType, Unmanaged.passUnretained(self).toOpaque(), nil
         )
     }
 }
@@ -859,11 +848,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 extension String {
     var fourCharCodeValue: FourCharCode {
         var result: FourCharCode = 0
-
-        for char in utf16 {
-            result = (result << 8) + FourCharCode(char)
-        }
-
+        for char in utf16 { result = (result << 8) + FourCharCode(char) }
         return result
     }
 }
