@@ -95,9 +95,20 @@ At the bottom of the settings panel you'll find two buttons:
 
 This is the recommended way to move your settings between Macs, back them up, or share a setup with someone else.
 
-### iCloud Sync
+## Changelog
 
-If the app is run as a properly signed macOS app, settings sync automatically across all your Macs via iCloud with no extra steps. Any change made on one Mac will appear on your other Macs within seconds. On unsigned builds (running via `swift MACrosshair.swift`), iCloud sync is silently skipped — use Export / Import instead.
+### v1.0.0
+- Added **Export Profile** — save all settings to a `.json` file
+- Added **Import Profile** — load a profile from a `.json` file, restoring all settings including theme and keyboard shortcut
+- Settings now persist automatically between sessions (no manual save needed)
+
+### v0.0.2
+- Added **crosshair offset** — shift the crosshair from center by any number of pixels on X and Y axes independently
+- Added **Reset Offset** button
+
+### v0.0.1
+- Added **persistent settings** via UserDefaults — theme, hotkey, and all crosshair values are remembered across launches
+- Removed redundant comments
 
 ## License
 
