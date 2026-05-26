@@ -11,7 +11,6 @@ A lightweight macOS overlay app that draws a customizable crosshair at the cente
 - **Theme support** — Light, Dark, or Clear settings window
 - **Persistent settings** — all settings are saved automatically and restored on next launch
 - **Profile export / import** — save your settings to a `.json` file and load them on any Mac
-- **iCloud sync** — settings sync automatically across all your Macs via iCloud (requires app signing)
 - **Joins all spaces** — crosshair stays visible across Mission Control spaces and fullscreen apps
 
 ## Requirements
