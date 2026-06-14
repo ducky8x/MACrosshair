@@ -112,8 +112,6 @@ This is the recommended way to move your settings between Macs, back them up, or
 
 ## License
 
-Copyright © 2026 Joowon Shin. All rights reserved.
+Copyright © 2026 Joowon Shin.
 
-This project is licensed under the [Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/).
-
-You are free to use, share, and modify this software for **personal and non-commercial purposes**, as long as you give appropriate credit. **You may not sell, sublicense, or use this software for commercial purposes.**
+This project is licensed under the [GNU General Public License v3.0](LICENSE.md).
