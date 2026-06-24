@@ -77,6 +77,6 @@ Use **Export Profile** to save your settings to a `.json` file, and **Import Pro
 
 ## License
 
-Copyright © 2026 Joowon Shin.
+Copyright © 2026 ducky8x.
 
 This project is licensed under the GNU GPL v3.0. You're free to use, modify, and distribute this code, but any project that uses it must also be open source and released under the same license. See the [LICENSE](./LICENSE) file for details.
