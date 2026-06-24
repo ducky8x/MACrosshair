@@ -2,7 +2,8 @@
 
 A lightweight macOS overlay that draws a customizable crosshair at the center of your screen. Originally built to assist with MCSR Oneshot, where marking the exact screen center is an advantage.
 
-> **This project is archived and no longer maintained. For more updates, check [this repository]([url](https://github.com/ducky8x/Mac-Speedrunning-Tools)).**
+> **This project is archived and no longer maintained. For more updates, check this repository:**
+> **(https://github.com/ducky8x/Mac-Speedrunning-Tools**
 
 ## Features
 
